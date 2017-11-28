@@ -13,7 +13,7 @@ node1.example.com
 node2.example.com
 ```
 - Copy play.yml.example to play.yaml and modify the vars to suit your tastes.
-- Run `ANSIBLE_ROLE_PATH=./ ansible-playbook play.yaml
+- Run `ANSIBLE_ROLE_PATH=./ ansible-playbook play.yaml`
 
 Description of variables
 ------------------------
