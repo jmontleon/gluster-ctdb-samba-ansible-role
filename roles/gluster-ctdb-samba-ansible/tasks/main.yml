@@ -1,0 +1,154 @@
+---
+  - name: Configure wsdd copr repo
+    yum_repository:
+      name: wsdd
+      description: "WS-Discovery Daemon"
+      baseurl: https://copr-be.cloud.fedoraproject.org/results/jmontleon/wsdd/fedora-$releasever-$basearch
+      enabled: yes
+      gpgcheck: no
+
+  - name: Install packages
+    yum:
+      name: "{{ item }}"
+      state: installed
+    with_items:
+      - ctdb
+      - glusterfs-server
+      - samba
+      - samba-vfs-glusterfs
+      - wsdd
+
+  - name: Configure firewalld ports
+    firewalld:
+      port: "{{ item }}"
+      permanent: true
+      state: enabled
+    with_items:
+      - 111/tcp
+      - 111/udp
+      - 137/udp
+      - 138/udp
+      - 139/tcp
+      - 445/tcp
+      - 3702/tcp
+      - 3702/udp
+      - 4379/tcp
+      - 24007/tcp
+      - 49152/tcp
+
+#  - name: Configure selinux booleans
+#    seboolean:
+#      name: "{{ item }}" 
+#      state: yes
+#      persistent: yes
+#    with_items:
+#      -
+#      -
+#      -
+
+  - name: Create gluster volume
+    gluster_volume:
+      state: present
+      name: "{{ gluster_volume_name }}" 
+    bricks: "{{ gluster_volume_mount }}/{{ gluster_brick_name }}"
+    replicas: 2 
+    cluster:
+      - "{{ ansible_play_batch }}"
+    run_once: true
+
+  - name: mount gluster volume
+    mount:
+      path: "{{ gluster_fuse_mount }}" 
+      src: "{{ inventory_hostname }}:{{ gluster_volume_name }}"  
+      fstype: glusterfs
+      state: mounted
+
+  - file:
+      path: "{{ gluster_fuse_mount }}/ctdb"
+      state: directory
+      mode: 0755
+    run_once: true
+
+  - copy:
+      content: |
+               "{{ ctdb_public_address_w_mask }} {{ ctdb_interface }}"
+      dest: "{{ gluster_fuse_mount }}/ctdb/public_addresses"
+    run_once: true
+
+  - file:
+      src: "{{ gluster_fuse_mount }}/ctdb/public_addresses" 
+      dest: /etc/ctdb/public_addresses
+      state: link
+
+  - copy:
+      content: |
+#               {{ ctdb_nodes|join('
+#               ') }}
+      dest: "{{ gluster_fuse_mount }}/ctdb/nodes"
+    run_once: true
+
+  - file:
+      src: "{{ gluster_fuse_mount }}/ctdb/nodes" 
+      dest: /etc/ctdb/nodes
+      state: link
+
+  - copy:
+      content: |
+               CTDB_RECOVERY_LOCK={{ gluster_fuse_mount }}/ctdb/lock
+               CTDB_NODES=/etc/ctdb/nodes
+               CTDB_PUBLIC_ADDRESSES=/etc/ctdb/public_addresses
+               CTDB_MANAGES_SAMBA=yes
+               CTDB_SAMBA_SKIP_SHARE_CHECK=yes
+      dest: "{{ gluster_fuse_mount }}/ctdb/ctdbd.conf"
+    run_once: true
+
+  - file:
+      src: "{{ gluster_fuse_mount }}/ctdb/ctdbd.conf" 
+      dest: /etc/ctdb/ctdbd.conf
+      state: link
+
+  - copy:
+      content: |
+               [global]
+	           netbios name = {{ samba_server_name }}
+	           workgroup = {{ samba_workgroup }}
+	           clustering = yes 
+	           private dir = {{ gluster_fuse_mount }}/ctdb
+	           disable netbios = yes
+               [backups]
+               vfs objects = glusterfs
+	           path = {{ samba_path }}
+               valid users = {{ samba_user }}
+               read only = No
+               browseable = Yes
+
+      dest: "{{ gluster_fuse_mount }}/ctdb/smb.conf"
+    run_once: true
+
+  - file:
+      src: "{{ gluster_fuse_mount }}/ctdb/smb.conf" 
+      dest: /etc/samba/smb.conf
+      state: link
+
+  - copy:
+      content: |
+               "WSDDNAME={{ samba_server_name }}"
+               "WSDDWORKGROUP={{ samba_workgroup }}"
+
+      dest: "{{ gluster_fuse_mount }}/ctdb/wsdd"
+    run_once: true
+
+  - file:
+      src: "{{ gluster_fuse_mount }}/ctdb/wsdd" 
+      dest: /etc/sysconfig/wsdd
+      state: link
+  
+- name: Start ctdb and wsdd
+    systemd:
+      name: "{{ item }}"
+      enabled: yes
+      state: started
+   with_items:
+     - ctdb
+     - wsdd
+

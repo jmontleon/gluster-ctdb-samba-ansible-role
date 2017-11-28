@@ -1,0 +1,19 @@
+- hosts:
+  - node1
+  - node2
+  vars:
+    gluster_brick_name: brick1
+    gluster_fuse_mount: /srv
+    gluster_volume_mount: /mnt
+    gluster_volume_name: backups
+    ctdb_public_address_w_mask: 192.168.1.40/24
+    ctdb_interface: eth0
+    ctdb_nodes:
+      - 192.168.1.41
+      - 192.168.1.42
+    samba_path: /samba
+    samba_server_name: NODE
+    samba_user: bob
+    samba_workgroup: WORKGROUP
+roles:
+  - role: gluster-ctdb-samba-ansible
