@@ -8,12 +8,15 @@
       gpgcheck: no
 
   - name: Install packages
-    yum:
+    dnf:
       name: "{{ item }}"
       state: installed
     with_items:
       - ctdb
+      - gluster-ctdb-samba-selinux
       - glusterfs-server
+      - libsemanage-python
+      - python-firewall
       - samba
       - samba-vfs-glusterfs
       - wsdd
@@ -34,32 +37,88 @@
       - 3702/udp
       - 4379/tcp
       - 24007/tcp
-      - 49152/tcp
+      - 49152-50000/tcp
 
-#  - name: Configure selinux booleans
-#    seboolean:
-#      name: "{{ item }}" 
-#      state: yes
-#      persistent: yes
-#    with_items:
-#      -
-#      -
-#      -
+  - name: Reload firewalld
+    systemd:
+      name: firewalld
+      enabled: yes
+      state: reloaded
+
+  - name: Configure selinux booleans
+    seboolean:
+      name: "{{ item }}"
+      state: yes
+      persistent: yes
+    with_items:
+      - use_fusefs_home_dirs
+      - samba_export_all_rw
+
+  - set_fact:
+      lvm_pvs_string: "{{ lvm_pvs|join(',') }}"
+
+  - parted:
+      device: "{{ item|regex_replace('^(.+)([0-9]{1})$','\\1') }}"
+      number: "{{ item[-1] }}"
+      state: present
+    with_items:
+      - "{{ lvm_pvs }}"
+
+  - name: Create lvm vg
+    lvg:
+      vg: "{{ lvm_vg_name }}"
+      pvs: "{{ lvm_pvs_string }}"
+
+  - lvol:
+      vg: "{{ lvm_vg_name }}"
+      lv: "{{ lvm_lv_name }}"
+      size: "{{ lvm_lv_size }}"
+      shrink: false
+
+  - name: Make filesystem
+    filesystem:
+      fstype: xfs
+      dev: "/dev/mapper/{{ lvm_vg_name }}-{{ lvm_lv_name }}"
+
+  - name: Mount lvm volume
+    mount:
+      path: "{{ gluster_volume_mount }}"
+      src: "/dev/mapper/{{ lvm_vg_name }}-{{ lvm_lv_name }}"
+      fstype: xfs
+      state: mounted
+
+  - file:
+      path: /mnt
+      state: directory
+      setype: glusterd_brick_t
+  - name: Start gluster
+    systemd:
+      name: glusterd
+      enabled: yes
+      state: started
+
+  # The first volume start doesn't seem to work if selinux is enabled.
+  - selinux:
+      policy: targeted
+      state: permissive
 
   - name: Create gluster volume
     gluster_volume:
       state: present
-      name: "{{ gluster_volume_name }}" 
-    bricks: "{{ gluster_volume_mount }}/{{ gluster_brick_name }}"
-    replicas: 2 
-    cluster:
-      - "{{ ansible_play_batch }}"
+      name: "{{ gluster_volume_name }}"
+      bricks: "{{ gluster_volume_mount }}/{{ gluster_brick_name }}"
+      replicas: 2
+      cluster: "{{ ansible_play_hosts }}"
     run_once: true
 
-  - name: mount gluster volume
+  - selinux:
+      policy: targeted
+      state: enforcing
+
+  - name: Mount gluster volume
     mount:
-      path: "{{ gluster_fuse_mount }}" 
-      src: "{{ inventory_hostname }}:{{ gluster_volume_name }}"  
+      path: "{{ gluster_fuse_mount }}"
+      src: "{{ inventory_hostname }}:{{ gluster_volume_name }}"
       fstype: glusterfs
       state: mounted
 
@@ -71,26 +130,36 @@
 
   - copy:
       content: |
-               "{{ ctdb_public_address_w_mask }} {{ ctdb_interface }}"
+               {{ ctdb_public_address_w_mask }} {{ ctdb_interface }}
       dest: "{{ gluster_fuse_mount }}/ctdb/public_addresses"
     run_once: true
 
   - file:
-      src: "{{ gluster_fuse_mount }}/ctdb/public_addresses" 
+      src: "{{ gluster_fuse_mount }}/ctdb/public_addresses"
       dest: /etc/ctdb/public_addresses
       state: link
 
+  - set_fact:
+      ctdb_nodes_string: "{{ groups['gluster-ctdb-samba'] | map('extract', hostvars, ['ansible_default_ipv4', 'address']) | list | join('\n') }}"
+
   - copy:
       content: |
-#               {{ ctdb_nodes|join('
-#               ') }}
+               {{ ctdb_nodes_string }}
       dest: "{{ gluster_fuse_mount }}/ctdb/nodes"
     run_once: true
 
   - file:
-      src: "{{ gluster_fuse_mount }}/ctdb/nodes" 
+      src: "{{ gluster_fuse_mount }}/ctdb/nodes"
       dest: /etc/ctdb/nodes
       state: link
+
+  - file:
+      dest: "{{ item }}"
+      state: absent
+    with_items:
+      - /etc/ctdb/ctdbd.conf
+      - /etc/samba/smb.conf
+      - /etc/sysconfig/wsdd
 
   - copy:
       content: |
@@ -103,30 +172,32 @@
     run_once: true
 
   - file:
-      src: "{{ gluster_fuse_mount }}/ctdb/ctdbd.conf" 
+      src: "{{ gluster_fuse_mount }}/ctdb/ctdbd.conf"
       dest: /etc/ctdb/ctdbd.conf
       state: link
+
+  - set_fact:
+      samba_users_string: "{{ samba_users|map(attribute='name')|list|join(' ') }}"
 
   - copy:
       content: |
                [global]
-	           netbios name = {{ samba_server_name }}
-	           workgroup = {{ samba_workgroup }}
-	           clustering = yes 
-	           private dir = {{ gluster_fuse_mount }}/ctdb
-	           disable netbios = yes
-               [backups]
+               netbios name = {{ samba_server_name }}
+               workgroup = {{ samba_workgroup }}
+               clustering = yes
+               private dir = {{ gluster_fuse_mount }}/ctdb
+               disable netbios = yes
+               [{{ samba_share_name }}]
                vfs objects = glusterfs
-	           path = {{ samba_path }}
-               valid users = {{ samba_user }}
+               path = {{ samba_path }}
+               valid users = {{ samba_users_string }}
                read only = No
                browseable = Yes
-
       dest: "{{ gluster_fuse_mount }}/ctdb/smb.conf"
     run_once: true
 
   - file:
-      src: "{{ gluster_fuse_mount }}/ctdb/smb.conf" 
+      src: "{{ gluster_fuse_mount }}/ctdb/smb.conf"
       dest: /etc/samba/smb.conf
       state: link
 
@@ -139,16 +210,37 @@
     run_once: true
 
   - file:
-      src: "{{ gluster_fuse_mount }}/ctdb/wsdd" 
+      src: "{{ gluster_fuse_mount }}/ctdb/wsdd"
       dest: /etc/sysconfig/wsdd
       state: link
-  
-- name: Start ctdb and wsdd
+
+  - name: Start ctdb and wsdd
     systemd:
       name: "{{ item }}"
       enabled: yes
       state: started
-   with_items:
-     - ctdb
-     - wsdd
+    with_items:
+      - ctdb
+      - wsdd
 
+  - name: Create users
+    user:
+      name: "{{ item }}"
+    with_items:
+     - "{{ samba_users|map(attribute='name')|list }}"
+
+  - name: Create samba users
+    shell: >
+      (pdbedit --user={{ item.name }} 2>&1 > /dev/null) \
+      || (echo {{ item.password }}; echo {{ item.password }}) \
+      | smbpasswd -s -a {{ item.name }}
+    with_items: "{{ samba_users }}"
+    register: create_user_output
+    changed_when: "'Added user' in create_user_output.stdout"
+
+  - name: Create samba directory
+    file:
+      path: "{{ gluster_fuse_mount }}{{ samba_path }}"
+      state: directory
+      mode: 0777
+    run_once: true
