@@ -102,6 +102,7 @@
       policy: targeted
       state: permissive
 
+  # Should probably support arbiters and higher replica counts
   - name: Create gluster volume
     gluster_volume:
       state: present
