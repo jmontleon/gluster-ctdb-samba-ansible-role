@@ -1,9 +1,9 @@
 ---
-  - name: Configure wsdd copr repo
+  - name: Configure gluster-ctdb-samba copr repo
     yum_repository:
-      name: wsdd
-      description: "WS-Discovery Daemon"
-      baseurl: https://copr-be.cloud.fedoraproject.org/results/jmontleon/wsdd/fedora-$releasever-$basearch
+      name: gluster-dtdb-samba
+      description: "gluster-ctdb-samba"
+      baseurl: https://copr-be.cloud.fedoraproject.org/results/jmontleon/gluster-ctdb-samba/fedora-$releasever-$basearch
       enabled: yes
       gpgcheck: no
 
