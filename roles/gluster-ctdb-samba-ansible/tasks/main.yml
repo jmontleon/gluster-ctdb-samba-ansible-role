@@ -204,8 +204,8 @@
 
   - copy:
       content: |
-               "WSDDNAME={{ samba_server_name }}"
-               "WSDDWORKGROUP={{ samba_workgroup }}"
+               WSDDNAME={{ samba_server_name }}
+               WSDDWORKGROUP={{ samba_workgroup }}
 
       dest: "{{ gluster_fuse_mount }}/ctdb/wsdd"
     run_once: true
