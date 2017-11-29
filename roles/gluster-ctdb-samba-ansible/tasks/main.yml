@@ -53,7 +53,7 @@
     with_items:
       - use_fusefs_home_dirs
       - samba_export_all_rw
-
+      - samba_load_libgfapi
   - set_fact:
       lvm_pvs_string: "{{ lvm_pvs|join(',') }}"
 
