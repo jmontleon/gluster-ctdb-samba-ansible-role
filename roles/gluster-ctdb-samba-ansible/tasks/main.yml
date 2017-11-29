@@ -18,7 +18,6 @@
       - libsemanage-python
       - python-firewall
       - samba
-      - samba-vfs-glusterfs
       - wsdd
 
   - name: Configure firewalld ports
@@ -168,7 +167,6 @@
                CTDB_NODES=/etc/ctdb/nodes
                CTDB_PUBLIC_ADDRESSES=/etc/ctdb/public_addresses
                CTDB_MANAGES_SAMBA=yes
-               CTDB_SAMBA_SKIP_SHARE_CHECK=yes
       dest: "{{ gluster_fuse_mount }}/ctdb/ctdbd.conf"
     run_once: true
 
@@ -189,8 +187,7 @@
                private dir = {{ gluster_fuse_mount }}/ctdb
                disable netbios = yes
                [{{ samba_share_name }}]
-               vfs objects = glusterfs
-               path = {{ samba_path }}
+               path = {{ gluster_fuse_mount }}{{ samba_path }}
                valid users = {{ samba_users_string }}
                read only = No
                browseable = Yes
